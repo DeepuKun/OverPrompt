@@ -1,5 +1,5 @@
-@import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Amatic+SC:wght@400;700&family=Bitcount+Grid+Double:wght@100..900&family=Damion&family=Noto+Sans:ital,wght@0,100..900;1,100..900&family=Ole&display=swap');
+@import "tailwindcss";
 /* Hide scrollbar for Chrome, Safari & Edge */
 ::-webkit-scrollbar {
   display: none;
