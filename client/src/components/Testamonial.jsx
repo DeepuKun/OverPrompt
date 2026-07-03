@@ -33,7 +33,7 @@ const Testamonial = () => {
 ];
 
     const CreateCard = ({ card }) => (
-        <div className="p-4 rounded-lg mx-4 shadow hover:shadow-lg transition-all bg-white duration-200 w-72 shrink-0">
+        <div className="p-4 rounded-lg mx-4  shadow hover:shadow-lg transition-all bg-white duration-200 w-72 shrink-0">
             <div className="flex gap-2">
                 <img className="size-11 rounded-full" src={card.image} alt="User Image" />
                 <div className="flex flex-col">
@@ -51,7 +51,7 @@ const Testamonial = () => {
     );
 
     return (
-        <>
+        <div className='mb-40'>
             <style>{`
             @keyframes marqueeScroll {
                 0% { transform: translateX(0%); }
@@ -95,7 +95,7 @@ const Testamonial = () => {
                 </div>
                 <div className="absolute right-0 top-0 h-full w-20 md:w-40 z-10 pointer-events-none bg-gradient-to-l from-white to-transparent"></div>
             </div>
-        </>
+        </div>
     )
 }
 

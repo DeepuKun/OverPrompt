@@ -49,7 +49,7 @@ const AiLogoMarquee = () => {
         }
       `}</style>
 
-      <div className="py-8">
+      <div className="py-8 mb-40">
         <h2 className="text-center text-lg md:text-xl font-semibold text-gray-700 mb-8">
           Analyze subscriptions from{" "}
           <span className="text-blue-700">popular AI tools</span>

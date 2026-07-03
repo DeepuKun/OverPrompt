@@ -5,6 +5,8 @@ import Problem from './components/Problem'
 import Steps from './components/Steps'
 import Testamonial from './components/Testamonial'
 import AiLogoMarquee from './components/AiLogoMarquee'
+import CTA from './components/CTA'
+import Footer from './components/Footer'
 
 const App = () => {
   return (
@@ -15,6 +17,8 @@ const App = () => {
       <Problem/>
       <Steps/>
       <Testamonial/>
+      <CTA/>
+      <Footer/>
       
     </div>
   )

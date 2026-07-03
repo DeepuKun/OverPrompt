@@ -43,7 +43,7 @@ const Hero = () => {
     className="w-80 px-5 py-3 rounded-xl border border-gray-300 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-200 transition-all duration-300 noto-sans bg-white"
   />
 
-  <button className="px-7 py-3 mt-6 w-80 md:w-50 md:mt-0 rounded-xl bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 text-white font-semibold shadow-lg hover:shadow-blue-300/40 hover:scale-105 transition-all duration-300 cursor-pointer">
+  <button className="px-7 py-3 mt-6 md:h-12 w-80 md:w-50 md:mt-0 rounded-xl bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 text-white font-semibold shadow-lg hover:shadow-blue-300/40 hover:scale-105 transition-all duration-300 cursor-pointer">
     Start Free Audit →
   </button>
 </div>
