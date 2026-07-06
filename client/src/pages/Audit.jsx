@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from "react";
+import { useState } from "react";
 
-// 1. Pricing Data (Source of Truth)
+// ─────────────────────────────────────────────────────────────
+// 1. Pricing Data (Source of Truth) — unchanged from original,
+//    re-verify against official pricing pages periodically.
+// ─────────────────────────────────────────────────────────────
 const PRICING_DATA = {
   Cursor: {
     Hobby: { price: 0, type: "individual", label: "Hobby ($0/mo)" },
@@ -49,25 +52,23 @@ const PRICING_DATA = {
     Teams: { price: 40, type: "team", label: "Teams ($40/user/mo)" },
     Enterprise: { price: 60, type: "team", label: "Enterprise (Custom - Est. $60/user/mo)" }
   },
-  "Anthropic API": {
-    API: { price: 0, type: "api", label: "Direct API Usage (Token-metered)" }
-  },
-  "OpenAI API": {
-    API: { price: 0, type: "api", label: "Direct API Usage (Token-metered)" }
-  },
-  "Gemini API": {
-    API: { price: 0, type: "api", label: "Direct API Usage (Token-metered)" }
-  }
+  "Anthropic API": { API: { price: 0, type: "api", label: "Direct API Usage (Token-metered)" } },
+  "OpenAI API": { API: { price: 0, type: "api", label: "Direct API Usage (Token-metered)" } },
+  "Gemini API": { API: { price: 0, type: "api", label: "Direct API Usage (Token-metered)" } }
 };
 
-// Use-case Overlap Maps for Step 3
 const OVERLAP_GROUPS = {
   coding: ["Cursor", "GitHub Copilot", "Windsurf"],
   assistant: ["Claude", "ChatGPT", "Gemini"],
   api: ["Anthropic API", "OpenAI API", "Gemini API"]
 };
 
-// Help helper for Step 1 cross-plan mapping
+const RANKING = {
+  coding: ["Cursor", "Windsurf", "GitHub Copilot"],
+  assistant: ["Claude", "ChatGPT", "Gemini"],
+  api: ["Anthropic API", "OpenAI API", "Gemini API"]
+};
+
 const TEAM_TO_INDIVIDUAL_MAP = {
   Cursor: { target: "Pro", price: 20 },
   "GitHub Copilot": { target: "Pro", price: 10 },
@@ -76,7 +77,7 @@ const TEAM_TO_INDIVIDUAL_MAP = {
   Windsurf: { target: "Pro", price: 20 }
 };
 
-// Same-vendor ladders for Step 2
+// index 0 in every ladder = free tier, index 1 = entry paid tier.
 const LADDERS = {
   Cursor: ["Hobby", "Pro", "Pro+", "Ultra"],
   "GitHub Copilot": ["Free", "Pro", "Pro+"],
@@ -86,35 +87,32 @@ const LADDERS = {
   Windsurf: ["Free", "Pro", "Max"]
 };
 
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+const spendOf = (t) => parseFloat(t.reported_monthly_spend) || 0;
+
+const emptyToolRow = (overrides = {}) => ({
+  tool_name: "Cursor",
+  plan: "Pro",
+  reported_monthly_spend: 20,
+  seats: 1,
+  usage_intensity: "moderate",
+  overage_frequency: "never",
+  spend_touched: false,
+  ...overrides
+});
+
 const Audit = () => {
-  // Step State
-  // 1: Form entry, 2: Loading animation, 3: Results dashboard
   const [step, setStep] = useState(1);
   const [loadingText, setLoadingText] = useState("");
-  
-  // Global form variables
   const [teamSize, setTeamSize] = useState(1);
   const [primaryUseCase, setPrimaryUseCase] = useState("mixed");
-  
-  // Reported tools list
-  const [reportedTools, setReportedTools] = useState([
-    {
-      tool_name: "Cursor",
-      plan: "Pro",
-      reported_monthly_spend: 20,
-      seats: 1,
-      usage_intensity: "moderate",
-      overage_frequency: "never"
-    }
-  ]);
-
-  // Output recommendation data
+  const [reportedTools, setReportedTools] = useState([emptyToolRow()]);
   const [auditResult, setAuditResult] = useState(null);
-  
-  // Checking list toggles for dynamic recalculation in results step
   const [activeCheckboxes, setActiveCheckboxes] = useState({});
 
-  // Loading text phrases sequence
   const loadingPhrases = [
     "Caching pricing indices from live sources...",
     "Scanning user stack for redundant workflows...",
@@ -123,198 +121,236 @@ const Audit = () => {
     "Compiling custom cost-efficiency options..."
   ];
 
-  // Dynamically update default spend when plan or seats change
+  // FIX (bug 1): reported_monthly_spend only auto-recalculates when the
+  // user hasn't manually typed their own number. Editing seats/plan after
+  // a manual edit no longer silently overwrites the real reported spend.
   const handleToolChange = (index, field, value) => {
     const updated = [...reportedTools];
-    updated[index][field] = value;
+    updated[index] = { ...updated[index], [field]: value };
+
+    if (field === "reported_monthly_spend") {
+      updated[index].spend_touched = true;
+    }
 
     if (field === "tool_name") {
       const firstPlan = Object.keys(PRICING_DATA[value])[0];
       updated[index].plan = firstPlan;
-      const unitPrice = PRICING_DATA[value][firstPlan].price;
-      updated[index].reported_monthly_spend = unitPrice * updated[index].seats;
-    } else if (field === "plan" || field === "seats") {
+      updated[index].spend_touched = false; // new tool = fresh suggestion baseline
+    }
+
+    if (["tool_name", "plan", "seats"].includes(field) && !updated[index].spend_touched) {
       const toolName = updated[index].tool_name;
       const planName = updated[index].plan;
       const seatsCount = parseInt(updated[index].seats) || 1;
-      const unitPrice = PRICING_DATA[toolName][planName]?.price || 0;
-      updated[index].reported_monthly_spend = unitPrice * seatsCount;
+      const unitPrice = PRICING_DATA[toolName]?.[planName]?.price || 0;
+      updated[index].reported_monthly_spend = r2(unitPrice * seatsCount);
     }
 
     setReportedTools(updated);
   };
 
   const addToolRow = () => {
-    // Find a tool not already added, default to Copilot/Claude if Cursor is taken
-    const currentNames = reportedTools.map(t => t.tool_name);
-    const available = Object.keys(PRICING_DATA).find(name => !currentNames.includes(name));
+    const currentNames = reportedTools.map((t) => t.tool_name);
+    const available = Object.keys(PRICING_DATA).find((name) => !currentNames.includes(name));
     const nextTool = available || "Claude";
     const firstPlan = Object.keys(PRICING_DATA[nextTool])[0];
-
     setReportedTools([
       ...reportedTools,
-      {
+      emptyToolRow({
         tool_name: nextTool,
         plan: firstPlan,
-        reported_monthly_spend: PRICING_DATA[nextTool][firstPlan].price,
-        seats: 1,
-        usage_intensity: "moderate",
-        overage_frequency: "never"
-      }
+        reported_monthly_spend: PRICING_DATA[nextTool][firstPlan].price
+      })
     ]);
   };
 
   const removeToolRow = (index) => {
-    if (reportedTools.length > 1) {
-      setReportedTools(reportedTools.filter((_, i) => i !== index));
-    }
+    if (reportedTools.length > 1) setReportedTools(reportedTools.filter((_, i) => i !== index));
   };
 
-  // Run the full Audit Pipeline logic
   const executeAudit = () => {
     setStep(2);
     let phraseIndex = 0;
     setLoadingText(loadingPhrases[0]);
-
     const timer = setInterval(() => {
       phraseIndex++;
-      if (phraseIndex < loadingPhrases.length) {
-        setLoadingText(loadingPhrases[phraseIndex]);
-      }
+      if (phraseIndex < loadingPhrases.length) setLoadingText(loadingPhrases[phraseIndex]);
     }, 550);
 
     setTimeout(() => {
       clearInterval(timer);
       const results = runPipelineLogic();
       setAuditResult(results);
-      
-      // Initialize checkboxes for recommended fixes as true (enabled)
       const initialChecked = {};
       results.tools.forEach((item, idx) => {
-        if (item.monthly_savings > 0) {
-          initialChecked[idx] = true;
-        }
+        if (item.monthly_savings > 0) initialChecked[idx] = true;
       });
       setActiveCheckboxes(initialChecked);
       setStep(3);
     }, 2800);
   };
 
+  // ───────────────────────────────────────────────────────────
+  // Audit pipeline
+  // ───────────────────────────────────────────────────────────
   const runPipelineLogic = () => {
     const outputs = [];
     const upgradeWarnings = [];
+    const dataWarnings = [];
 
-    // Helper map of tools present in the audit
-    const toolMap = {};
-    reportedTools.forEach(t => {
-      toolMap[t.tool_name] = t;
+    // Data-consistency guard (FIX 10): flag seats that don't square with
+    // the stated team size, and reported spend that's wildly off from
+    // the plan's catalog price × seats — soft warnings, non-blocking.
+    reportedTools.forEach((t) => {
+      const seatsCount = parseInt(t.seats) || 1;
+      if (teamSize > 1 && seatsCount > teamSize) {
+        dataWarnings.push(
+          `${t.tool_name}: you reported ${seatsCount} seats but a total team size of ${teamSize} — double-check this number.`
+        );
+      }
+      const listPrice = PRICING_DATA[t.tool_name]?.[t.plan]?.price ?? 0;
+      const expected = listPrice * seatsCount;
+      const reported = spendOf(t);
+      if (expected > 0 && Math.abs(reported - expected) / expected > 0.8) {
+        dataWarnings.push(
+          `${t.tool_name} (${t.plan}): reported spend $${r2(reported)}/mo is far from the catalog price (~$${r2(expected)}/mo for ${seatsCount} seat(s)) — worth confirming.`
+        );
+      }
     });
 
-    // Run evaluations per tool
+    // FIX 4: detect literal duplicate subscriptions to the same tool before
+    // anything else. The lower-tier duplicate(s) are flagged as an outright
+    // cancellation and skipped from the rest of the per-tool pipeline.
+    const nameCount = {};
+    reportedTools.forEach((t) => {
+      nameCount[t.tool_name] = (nameCount[t.tool_name] || 0) + 1;
+    });
+
+    const keepIndexForName = {};
+    Object.keys(nameCount).forEach((name) => {
+      if (nameCount[name] <= 1) return;
+      const rows = reportedTools.map((r, i) => ({ r, i })).filter((x) => x.r.tool_name === name);
+      const keep = rows.reduce((best, cur) => {
+        const bestPrice = PRICING_DATA[name][best.r.plan]?.price ?? 0;
+        const curPrice = PRICING_DATA[name][cur.r.plan]?.price ?? 0;
+        return curPrice > bestPrice ? cur : best;
+      }, rows[0]);
+      keepIndexForName[name] = keep.i;
+    });
+
+    const toolMap = {};
+    reportedTools.forEach((t) => (toolMap[t.tool_name] = t));
+
     reportedTools.forEach((t, index) => {
-      const candidates = [];
       const toolName = t.tool_name;
       const planName = t.plan;
       const seatsCount = parseInt(t.seats) || 1;
       const intensity = t.usage_intensity;
       const overages = t.overage_frequency;
-      const currentSpend = parseFloat(t.reported_monthly_spend) || 0;
-
+      const currentSpend = spendOf(t);
       const planMeta = PRICING_DATA[toolName][planName];
       const isTeamTier = planMeta?.type === "team";
       const listPrice = planMeta?.price || 0;
 
-      // STEP 1 - Seat/plan-size sanity check
+      // Duplicate-subscription short-circuit
+      if (nameCount[toolName] > 1 && keepIndexForName[toolName] !== index) {
+        outputs.push({
+          tool_name: toolName,
+          current_plan: planName,
+          current_monthly_spend: r2(currentSpend),
+          recommended_action: "cancel_duplicate",
+          recommended_plan_or_tool: `Consolidate into your other ${toolName} subscription`,
+          monthly_savings: r2(currentSpend),
+          reasoning_sentence: `You reported ${nameCount[toolName]} separate ${toolName} subscriptions — this one is redundant and can be cancelled outright.`,
+          confidence: "high",
+          secondary_note: null
+        });
+        return; // skip steps 1–5 for this row
+      }
+
+      const primaryCandidates = [];
+      const noteCandidates = [];
+
+      // STEP 1 — seat/plan-size sanity check
       if (seatsCount < 3 && isTeamTier) {
         const mapping = TEAM_TO_INDIVIDUAL_MAP[toolName];
         if (mapping) {
-          const unitSavings = listPrice - mapping.price;
-          const savings = unitSavings * seatsCount;
+          const savings = r2((listPrice - mapping.price) * seatsCount);
           if (savings > 0) {
-            candidates.push({
+            primaryCandidates.push({
               check: "step1",
               action: "downgrade",
               recommended_plan_or_tool: mapping.target,
               monthly_savings: savings,
-              reasoning_sentence: `Downgrading from team-tier (${planName}) to individual ${mapping.target} seats saves $${savings}/mo for ${seatsCount} seat(s) without losing core capabilities.`,
+              reasoning_sentence: `Downgrading from team-tier (${planName}) to individual ${mapping.target} seats saves $${savings}/mo for ${seatsCount} seat(s) without losing core capability.`,
               confidence: "high"
             });
           }
         }
       }
 
-      // STEP 2 - Same-vendor downgrade check
+      // STEP 2 — same-vendor plan-fit check
+      // FIX 6 + 7: overage_frequency is now the primary, objective signal.
+      // "sometimes" now has a defined (lower-confidence) path, and the
+      // upgrade path is no longer capped at planIndex <= 1.
       const ladder = LADDERS[toolName];
       if (ladder) {
         const planIndex = ladder.indexOf(planName);
-
         if (planIndex !== -1) {
-          // Rule A: Light usage + no overages, on a plan at or above the entry paid tier
-          // Entry paid is index 1. If above index 1, downgrade to index 1. If on index 1, downgrade to index 0 (Free).
-          if (intensity === "light" && overages === "never" && planIndex >= 1) {
-            const targetIndex = planIndex > 1 ? 1 : 0;
-            const entryPlan = ladder[targetIndex];
-            const entryPrice = PRICING_DATA[toolName][entryPlan]?.price || 0;
-            const savings = currentSpend - (entryPrice * seatsCount);
-            if (savings > 0) {
-              candidates.push({
-                check: planIndex > 1 ? "step2_light_above_entry" : "step2_light_entry",
-                action: "downgrade",
-                recommended_plan_or_tool: entryPlan,
-                monthly_savings: savings,
-                reasoning_sentence: planIndex > 1
-                  ? `With light usage and no limits reached, downgrading from ${planName} to the entry paid plan (${entryPlan}) saves $${savings}/mo.`
-                  : `With light usage and no limits reached, downgrading from the paid ${planName} plan to the free tier (${entryPlan}) saves $${savings}/mo.`,
-                confidence: "high"
-              });
-            }
-          }
-
-          // Rule B: Moderate usage + no overages, on Pro+/Ultra/Max (index >= 2)
-          if (intensity === "moderate" && overages === "never" && planIndex >= 2) {
-            // Base paid tier is index 1
-            const basePlan = ladder[1];
-            const basePrice = PRICING_DATA[toolName][basePlan]?.price || 0;
-            const savings = currentSpend - (basePrice * seatsCount);
-            if (savings > 0) {
-              candidates.push({
-                check: "step2_moderate",
-                action: "downgrade",
-                recommended_plan_or_tool: basePlan,
-                monthly_savings: savings,
-                reasoning_sentence: `Based on moderate activity, downgrading ${planName} to the base ${basePlan} plan covers your needs and saves $${savings}/mo.`,
-                confidence: "high"
-              });
-            }
-          }
-
-          // Rule C: Heavy usage + frequent overages on Free/entry (index <= 1) -> recommend upgrade (added cost, warning)
-          if (intensity === "heavy" && overages === "often" && planIndex <= 1) {
-            const nextPlan = ladder[planIndex + 1] || ladder[ladder.length - 1];
+          if (overages === "often" && planIndex < ladder.length - 1) {
+            const nextPlan = ladder[planIndex + 1];
             const nextPrice = PRICING_DATA[toolName][nextPlan]?.price || 0;
-            const costIncrease = (nextPrice * seatsCount) - currentSpend;
-            if (costIncrease > 0) {
-              candidates.push({
+            const addedCost = r2(nextPrice * seatsCount - currentSpend);
+            if (addedCost > 0) {
+              primaryCandidates.push({
                 check: "step2_upgrade",
                 action: "upgrade",
                 recommended_plan_or_tool: nextPlan,
                 monthly_savings: 0,
-                added_cost: costIncrease,
-                reasoning_sentence: `Heavy usage and daily limits throttling on ${planName} suggest an upgrade to ${nextPlan} (+ $${costIncrease}/mo) will avoid performance blocks.`,
+                added_cost: addedCost,
+                reasoning_sentence: `You're frequently hitting limits on ${planName} — upgrading to ${nextPlan} (+$${addedCost}/mo) avoids the throttling, regardless of how you'd otherwise rate your usage.`,
                 confidence: "high"
               });
               upgradeWarnings.push({
                 tool_name: toolName,
-                added_monthly_cost: costIncrease,
-                reasoning: `Heavy usage and daily limits throttling on ${planName} suggest an upgrade to ${nextPlan} (+ $${costIncrease}/mo) will avoid performance blocks.`
+                added_monthly_cost: addedCost,
+                reasoning: `${toolName}: frequent limit-outs on ${planName} — upgrading to ${nextPlan} costs +$${addedCost}/mo but removes the throttling.`
               });
+            }
+          } else if (overages !== "often") {
+            let target = null;
+            if (intensity === "light" && planIndex >= 1) {
+              target = planIndex > 1 ? 1 : 0;
+            } else if (intensity === "moderate" && planIndex >= 2) {
+              target = 1;
+            }
+            if (target !== null && target < planIndex) {
+              const targetPlan = ladder[target];
+              const targetPrice = PRICING_DATA[toolName][targetPlan]?.price || 0;
+              const savings = r2(currentSpend - targetPrice * seatsCount);
+              if (savings > 0) {
+                const isSoft = overages === "sometimes";
+                primaryCandidates.push({
+                  check: "step2_downgrade",
+                  action: "downgrade",
+                  recommended_plan_or_tool: targetPlan,
+                  monthly_savings: savings,
+                  reasoning_sentence: isSoft
+                    ? `Usage looks ${intensity} and you only occasionally hit limits — dropping to ${targetPlan} saves $${savings}/mo, but keep an eye on overages after switching.`
+                    : `With ${intensity} usage and no limits ever reached, ${targetPlan} covers you and saves $${savings}/mo.`,
+                  confidence: isSoft ? "medium" : "high"
+                });
+              }
             }
           }
         }
       }
 
-      // STEP 3 - Cross-tool redundancy check
-      // Find overlap groups
+      // STEP 3 — cross-tool redundancy check
+      // FIX 3: consolidation target is chosen by actual cost, not a fixed
+      // capability rank alone. The pricier "more capable" tool is only
+      // preferred when usage is genuinely heavy, and the trade-off is
+      // always stated explicitly so nothing is hidden.
       let groupName = null;
       let groupMembers = [];
       Object.entries(OVERLAP_GROUPS).forEach(([name, members]) => {
@@ -324,45 +360,46 @@ const Audit = () => {
         }
       });
 
+      let redundancyFired = false;
       if (groupName) {
-        // Count paid tools from this group in reported list
         const activeGroupTools = reportedTools.filter(
-          item => groupMembers.includes(item.tool_name) && item.reported_monthly_spend > 0
+          (item) => groupMembers.includes(item.tool_name) && spendOf(item) > 0
         );
 
         if (activeGroupTools.length >= 2) {
-          const isCodingGroup = groupName === "coding";
-          const isAssistantGroup = groupName === "assistant";
-          
-          // Only trigger if seats <= 2 or primary usecase matches
-          const qualifies = seatsCount <= 2 || teamSize <= 2 || 
-                            (isCodingGroup && primaryUseCase === "coding") ||
-                            (isAssistantGroup && ["writing", "data", "research"].includes(primaryUseCase));
+          const qualifies =
+            seatsCount <= 2 ||
+            teamSize <= 2 ||
+            (groupName === "coding" && primaryUseCase === "coding") ||
+            (groupName === "assistant" && ["writing", "data", "research"].includes(primaryUseCase));
 
           if (qualifies) {
-            // Find highest capability tool active
-            let bestTool = activeGroupTools[0].tool_name;
-            if (isCodingGroup) {
-              // Rank: Cursor > Windsurf > Copilot
-              const ranking = ["Cursor", "Windsurf", "GitHub Copilot"];
-              bestTool = activeGroupTools.sort((a, b) => ranking.indexOf(a.tool_name) - ranking.indexOf(b.tool_name))[0].tool_name;
-            } else if (isAssistantGroup) {
-              // Rank: Claude > ChatGPT > Gemini
-              const ranking = ["Claude", "ChatGPT", "Gemini"];
-              bestTool = activeGroupTools.sort((a, b) => ranking.indexOf(a.tool_name) - ranking.indexOf(b.tool_name))[0].tool_name;
-            } else {
-              // API Rank: Anthropic API > OpenAI API > Gemini API
-              const ranking = ["Anthropic API", "OpenAI API", "Gemini API"];
-              bestTool = activeGroupTools.sort((a, b) => ranking.indexOf(a.tool_name) - ranking.indexOf(b.tool_name))[0].tool_name;
-            }
+            const ranking = RANKING[groupName];
+            const withUnit = activeGroupTools.map((item) => ({
+              tool_name: item.tool_name,
+              spend: spendOf(item),
+              unitCost: spendOf(item) / (parseInt(item.seats) || 1)
+            }));
+            const cheapest = [...withUnit].sort((a, b) => a.unitCost - b.unitCost)[0];
+            const mostCapable = [...withUnit].sort(
+              (a, b) => ranking.indexOf(a.tool_name) - ranking.indexOf(b.tool_name)
+            )[0];
+
+            const preferCapability = intensity === "heavy";
+            const bestTool = preferCapability ? mostCapable.tool_name : cheapest.tool_name;
 
             if (toolName !== bestTool) {
-              candidates.push({
+              redundancyFired = true;
+              const caveat =
+                bestTool !== cheapest.tool_name
+                  ? ` Keeping ${bestTool} instead of the cheaper ${cheapest.tool_name} ($${r2(cheapest.spend)}/mo) is worth it only if you actually need the extra capability for heavy use — otherwise ${cheapest.tool_name} would save more.`
+                  : "";
+              primaryCandidates.push({
                 check: "step3",
                 action: "consolidate",
                 recommended_plan_or_tool: bestTool,
-                monthly_savings: currentSpend,
-                reasoning_sentence: `Consolidating multiple ${groupName === 'coding' ? 'IDE editors' : 'chat subscriptions'} to ${bestTool} saves $${currentSpend}/mo by canceling redundant ${toolName} access.`,
+                monthly_savings: r2(currentSpend),
+                reasoning_sentence: `You're paying for multiple ${groupName === "coding" ? "in-editor coding tools" : "general AI assistants"} that cover the same job — dropping ${toolName} and keeping ${bestTool} saves $${r2(currentSpend)}/mo.${caveat}`,
                 confidence: "high"
               });
             }
@@ -370,110 +407,78 @@ const Audit = () => {
         }
       }
 
-      // STEP 4 - Cheaper alternative-tool check
-      // Only runs if step 3 overlap did not fire for this tool
-      const hasRedundancyCheck = candidates.some(c => c.check === "step3");
-      if (!hasRedundancyCheck && groupName) {
-        // Compare effective unit cost vs cheapest in group that covers intensity
-        // Let's check Cursor/Windsurf Pro+ vs Copilot Pro for light coders
-        if (groupName === "coding" && intensity === "light" && planName !== "Hobby" && planName !== "Free") {
-          // If they are paying > $10/user
-          const effectiveUnitCost = currentSpend / seatsCount;
-          if (effectiveUnitCost >= 20) {
-            const savings = (effectiveUnitCost - 10) * seatsCount;
-            if (savings > 0) {
-              candidates.push({
-                check: "step4",
-                action: "switch",
-                recommended_plan_or_tool: "GitHub Copilot (Pro)",
-                monthly_savings: savings,
-                reasoning_sentence: `As a light coder, switching from ${toolName} to GitHub Copilot Pro ($10/mo) saves $${savings}/mo, though you may lose agentic file edits.`,
-                confidence: "medium"
-              });
-            }
-          }
-        }
-        
-        // Assistant group - high limit tiers vs standard $20 plans for light/mod
-        if (groupName === "assistant" && (planName.includes("Max") || planName.includes("Pro (") || planName.includes("Ultra")) && (intensity === "light" || intensity === "moderate")) {
-          const effectiveUnitCost = currentSpend / seatsCount;
-          if (effectiveUnitCost > 20) {
-            const savings = (effectiveUnitCost - 20) * seatsCount;
-            candidates.push({
-              check: "step4",
-              action: "switch",
-              recommended_plan_or_tool: "Claude Pro / ChatGPT Plus ($20/mo)",
-              monthly_savings: savings,
-              reasoning_sentence: `Based on your ${intensity} usage, switching to standard Claude Pro or ChatGPT Plus ($20/mo) saves $${savings}/mo over the premium plan quota.`,
-              confidence: "medium"
-            });
-          }
-        }
-      }
-
-      // STEP 5 - Subscription vs direct API check
-      // Case A: High-tier subscription + API direct of same vendor
-      if (planName.includes("Max") || planName.includes("Pro (") || planName.includes("Ultra")) {
-        const correspondingApi = 
-          toolName === "Claude" ? "Anthropic API" :
-          toolName === "ChatGPT" ? "OpenAI API" :
-          toolName === "Gemini" ? "Gemini API" : null;
-
-        if (correspondingApi && toolMap[correspondingApi]) {
-          candidates.push({
-            check: "step5_api_overlap",
-            action: "consolidate",
-            recommended_plan_or_tool: correspondingApi,
-            monthly_savings: 0,
-            reasoning_sentence: `You are paying for a high-tier ${toolName} subscription alongside direct API keys. Shift automatic routines entirely to the API to cut licensing bills.`,
+      // STEP 4 — cheaper cross-vendor alternative
+      // FIX 8 + 9: removed the "assistant" branch entirely (it was just
+      // restating Step 2's own-tool downgrade under a misleading "switch"
+      // label). The coding-group branch now guards against recommending
+      // a tool switch to itself and only fires on a genuine ≥30% gap.
+      if (!redundancyFired && groupName === "coding" && intensity === "light" && toolName !== "GitHub Copilot") {
+        const effectiveUnitCost = currentSpend / seatsCount;
+        const alt = 10; // GitHub Copilot Pro
+        if (effectiveUnitCost > 0 && (effectiveUnitCost - alt) / effectiveUnitCost >= 0.3) {
+          const savings = r2((effectiveUnitCost - alt) * seatsCount);
+          noteCandidates.push({
+            check: "step4",
+            action: "switch",
+            recommended_plan_or_tool: "GitHub Copilot Pro ($10/mo)",
+            monthly_savings: savings,
+            reasoning_sentence: `As a light coder, GitHub Copilot Pro ($10/mo) may cover your needs for $${savings}/mo less than ${toolName} — though you'd lose ${toolName}'s multi-file agent mode.`,
             confidence: "medium",
             isNote: true
           });
         }
       }
 
-      // Case B: API only with heavy usage
+      // STEP 5 — subscription vs. direct API
+      // FIX 5: now gated on heavy intensity too, since subscription + API
+      // for the same vendor is very often two legitimate, non-overlapping
+      // uses (chatting vs. building a product) rather than true redundancy.
+      const highTier = planName.includes("Max") || planName.includes("Pro (") || planName.includes("Ultra");
+      if (highTier && intensity === "heavy") {
+        const correspondingApi =
+          toolName === "Claude" ? "Anthropic API" : toolName === "ChatGPT" ? "OpenAI API" : toolName === "Gemini" ? "Gemini API" : null;
+        if (correspondingApi && toolMap[correspondingApi]) {
+          noteCandidates.push({
+            check: "step5_api_overlap",
+            action: "consolidate",
+            recommended_plan_or_tool: correspondingApi,
+            monthly_savings: 0,
+            reasoning_sentence: `If any of your heavy ${toolName} usage is actually scripted/programmatic rather than interactive chat, that portion is usually cheaper run through the ${correspondingApi} directly. Worth checking your usage split before assuming these are redundant.`,
+            confidence: "medium",
+            isNote: true
+          });
+        }
+      }
       if (planName === "API" && intensity === "heavy") {
-        const correspondingSub = 
-          toolName === "Anthropic API" ? "Claude (Max)" :
-          toolName === "OpenAI API" ? "ChatGPT (Pro)" :
-          toolName === "Gemini API" ? "Gemini (Ultra)" : null;
-
-        candidates.push({
+        const correspondingSub =
+          toolName === "Anthropic API" ? "Claude Max" : toolName === "OpenAI API" ? "ChatGPT Pro" : toolName === "Gemini API" ? "Gemini AI Ultra" : "a subscription plan";
+        noteCandidates.push({
           check: "step5_sub_instead",
           action: "switch",
-          recommended_plan_or_tool: correspondingSub || "Subscription Plan",
+          recommended_plan_or_tool: correspondingSub,
           monthly_savings: 0,
-          reasoning_sentence: `Heavy direct API workflows can exceed subscription costs. Switching repetitive tasks to a Claude Max or ChatGPT Pro subscription may reduce overall spend.`,
+          reasoning_sentence: `Sustained heavy direct-API usage can exceed subscription costs. If your usage is steady day-to-day, compare your actual API bill against ${correspondingSub} before renewing.`,
           confidence: "medium",
           isNote: true
         });
       }
 
-      // Scoring & Pick Winner
-      if (candidates.length > 0) {
-        // Score each candidate:
-        // score = savings_magnitude + (confidence === 'high' ? 1000 : 0) + (action === 'downgrade' ? 200 : 0)
-        // High confidence/deterministic rules take precedent, same-vendor downgrades prefered over complex tool swaps
-        const scored = candidates.map(c => {
-          let score = c.monthly_savings;
-          if (c.confidence === "high") score += 1000;
-          if (c.action === "downgrade") score += 200;
-          if (c.isNote) score -= 500; // API notes are secondary suggestions
-          return { ...c, score };
-        });
-
-        // Sort descending
-        scored.sort((a, b) => b.score - a.score);
+      // FIX 2: primary recommendation is only ever chosen from
+      // primaryCandidates. Notes never get promoted to the headline card;
+      // if nothing primary fired, this correctly falls through to the
+      // "already optimal" branch below, with the best note attached as
+      // a secondary_note instead of masquerading as the main result.
+      if (primaryCandidates.length > 0) {
+        const scored = primaryCandidates
+          .map((c) => ({ ...c, score: c.monthly_savings + (c.confidence === "high" ? 1000 : 0) + (c.action === "downgrade" ? 200 : 0) }))
+          .sort((a, b) => b.score - a.score);
         const winner = scored[0];
-
-        // Keep secondary note if any
-        const secondary = scored.find(c => c.isNote || (c.check === "step4" && winner.check !== "step4"));
+        const secondary = noteCandidates[0] || scored.find((c) => c !== winner);
 
         outputs.push({
           tool_name: toolName,
           current_plan: planName,
-          current_monthly_spend: currentSpend,
+          current_monthly_spend: r2(currentSpend),
           recommended_action: winner.action,
           recommended_plan_or_tool: winner.recommended_plan_or_tool,
           monthly_savings: winner.monthly_savings,
@@ -481,54 +486,58 @@ const Audit = () => {
           confidence: winner.confidence,
           secondary_note: secondary ? secondary.reasoning_sentence : null
         });
-      } else {
-        // STEP 6 — "Already optimal" honesty check
+      } else if (noteCandidates.length > 0) {
+        // Only low-confidence notes exist — tool is fundamentally fine,
+        // but surface the note honestly as secondary, not primary.
         outputs.push({
           tool_name: toolName,
           current_plan: planName,
-          current_monthly_spend: currentSpend,
+          current_monthly_spend: r2(currentSpend),
           recommended_action: "keep",
           recommended_plan_or_tool: planName,
           monthly_savings: 0,
-          reasoning_sentence: "Your current subscription plan aligns perfectly with your usage activity. No adjustment is required.",
-          confidence: "high"
+          reasoning_sentence: "Your current plan is a reasonable fit for your reported usage.",
+          confidence: "high",
+          secondary_note: noteCandidates[0].reasoning_sentence
+        });
+      } else {
+        // STEP 6 — already-optimal honesty check
+        outputs.push({
+          tool_name: toolName,
+          current_plan: planName,
+          current_monthly_spend: r2(currentSpend),
+          recommended_action: "keep",
+          recommended_plan_or_tool: planName,
+          monthly_savings: 0,
+          reasoning_sentence: "Your current plan aligns well with your reported usage — no changes needed.",
+          confidence: "high",
+          secondary_note: null
         });
       }
     });
 
-    // Aggregate values
-    const totalSavings = outputs.reduce((sum, item) => sum + item.monthly_savings, 0);
+    const totalSavings = r2(outputs.reduce((sum, item) => sum + item.monthly_savings, 0));
     let overallStatus = "already_optimal";
-    if (totalSavings > 100) {
-      overallStatus = "high_savings";
-    } else if (totalSavings >= 15) {
-      overallStatus = "moderate_savings";
-    }
+    if (totalSavings > 100) overallStatus = "high_savings";
+    else if (totalSavings >= 15) overallStatus = "moderate_savings";
 
     return {
       tools: outputs,
       total_monthly_savings: totalSavings,
-      total_annual_savings: totalSavings * 12,
+      total_annual_savings: r2(totalSavings * 12),
       upgrade_warnings: upgradeWarnings,
+      data_warnings: dataWarnings,
       overall_status: overallStatus
     };
   };
 
-  // Recalculate totals dynamically based on selected checkboxes in Step 3
   const getDynamicSavings = () => {
     if (!auditResult) return { monthly: 0, annual: 0 };
-    
     let monthly = 0;
     auditResult.tools.forEach((item, index) => {
-      if (activeCheckboxes[index] && item.monthly_savings > 0) {
-        monthly += item.monthly_savings;
-      }
+      if (activeCheckboxes[index] && item.monthly_savings > 0) monthly += item.monthly_savings;
     });
-    
-    return {
-      monthly: Math.round(monthly * 100) / 100,
-      annual: Math.round(monthly * 12 * 100) / 100
-    };
+    return { monthly: r2(monthly), annual: r2(monthly * 12) };
   };
 
   const dynamicSavings = getDynamicSavings();
@@ -816,6 +825,14 @@ const Audit = () => {
 
             {/* Right Column: Recommendations List */}
             <div className="lg:col-span-2 space-y-6">
+              {auditResult.data_warnings.length > 0 && (
+                <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 font-semibold space-y-1.5">
+                  {auditResult.data_warnings.map((w, i) => (
+                    <div key={i}>⚠️ {w}</div>
+                  ))}
+                </div>
+              )}
+
               {/* Checkbox Recalculation Checklist */}
               {auditResult.tools.some(t => t.monthly_savings > 0) && (
                 <div className="p-6 bg-white border border-gray-100 rounded-3xl shadow-xl">
@@ -846,6 +863,7 @@ const Audit = () => {
                               {item.recommended_action === "downgrade" && `Downgrade ${item.tool_name}`}
                               {item.recommended_action === "consolidate" && `Consolidate ${item.tool_name}`}
                               {item.recommended_action === "switch" && `Switch ${item.tool_name}`}
+                              {item.recommended_action === "cancel_duplicate" && `Cancel duplicate ${item.tool_name}`}
                               <span className="text-blue-700 ml-2">Save ${item.monthly_savings}/mo</span>
                             </span>
                             <span className="text-gray-400 font-semibold">{item.reasoning_sentence}</span>
@@ -909,11 +927,11 @@ const Audit = () => {
                             isOptimal
                               ? "bg-emerald-50 text-emerald-800 border border-emerald-100"
                               : item.recommended_action === "upgrade"
-                              ? "bg-amber-55 text-amber-900 border border-amber-200"
+                              ? "bg-amber-100 text-amber-900 border border-amber-200"
                               : "bg-blue-50 text-blue-800 border border-blue-100"
                           }`}
                         >
-                          {isOptimal ? "Well-Suited" : `${item.recommended_action}`}
+                          {isOptimal ? "Well-Suited" : item.recommended_action.replace("_", " ")}
                         </span>
                       </div>
 
@@ -927,7 +945,7 @@ const Audit = () => {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
                           <div>
-                            <span className="text-gray-500 font-bold block mb-0.5">Alternative Recommendation:</span>
+                            <span className="text-gray-500 font-bold block mb-0.5">Worth investigating:</span>
                             {item.secondary_note}
                           </div>
                         </div>
@@ -942,16 +960,7 @@ const Audit = () => {
                 <button
                   onClick={() => {
                     setStep(1);
-                    setReportedTools([
-                      {
-                        tool_name: "Cursor",
-                        plan: "Pro",
-                        reported_monthly_spend: 20,
-                        seats: 1,
-                        usage_intensity: "moderate",
-                        overage_frequency: "never"
-                      }
-                    ]);
+                    setReportedTools([emptyToolRow()]);
                   }}
                   className="px-6 py-3 rounded-xl border border-gray-200 text-gray-600 hover:text-gray-800 hover:bg-slate-50 font-semibold transition duration-200 cursor-pointer flex items-center justify-center gap-2"
                 >
