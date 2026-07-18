@@ -12,7 +12,7 @@
 - **Interactive Stack Optimization Wizard**: Walk through step-by-step inputs to generate custom, actionable recommendations (e.g., switching to direct token-metered APIs, consolidating licenses, or utilizing free tier limits).
 - **Modern Premium Design**: Beautiful, responsive user interface styled with Tailwind CSS, custom loaders, and visual card layouts.
 
-----
+---
 
 ## 🛠️ Technology Stack
 
