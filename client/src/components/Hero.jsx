@@ -3,7 +3,7 @@ import { TypeAnimation } from "react-type-animation";
 import AiLogoMarquee from './AiLogoMarquee';
 const Hero = () => {
   return (
-    <div className='flex md:h-126 w-full pt-16'>
+    <div className='flex md:h-126 w-full pt-6'>
 <div>
 
         <div className='w-screen md:w-160 ml-8 pt-15'>
